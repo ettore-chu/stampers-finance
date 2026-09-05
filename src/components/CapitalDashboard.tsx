@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { won, pct, fmtDate } from '../lib/format'
-import type { FinanceCompany, FinanceSnapshot } from '../lib/types'
+import { ledgerTotals } from '../lib/ledger'
+import type { FinanceAccount, FinanceCompany, FinanceJournalLine, FinanceSnapshot } from '../lib/types'
 
 const VB_W = 640
 const VB_H = 300
@@ -174,9 +175,49 @@ function AddSnapshotForm({ onAdded }: { onAdded: () => void }) {
     notes: '',
   })
   const [busy, setBusy] = useState(false)
+  const [calcBusy, setCalcBusy] = useState(false)
+  const [calcNote, setCalcNote] = useState<string | null>(null)
 
   function set<K extends keyof typeof f>(k: K, v: string) {
     setF((prev) => ({ ...prev, [k]: v }))
+  }
+
+  async function calcFromLedger() {
+    if (!f.period_end) {
+      setCalcNote('먼저 기준일을 입력하세요.')
+      return
+    }
+    setCalcBusy(true)
+    setCalcNote(null)
+    const [{ data: accounts, error: accErr }, { data: lines, error: lnErr }] = await Promise.all([
+      supabase.from('finance_accounts').select('*'),
+      supabase
+        .from('finance_journal_lines')
+        .select('*, finance_journal_entries!inner(entry_date)')
+        .lte('finance_journal_entries.entry_date', f.period_end),
+    ])
+    setCalcBusy(false)
+    if (accErr || lnErr) {
+      setCalcNote((accErr ?? lnErr)?.message ?? '계산 실패')
+      return
+    }
+    const typedAccounts = (accounts ?? []) as FinanceAccount[]
+    const typedLines = (lines ?? []) as FinanceJournalLine[]
+    const totals = ledgerTotals(typedAccounts, typedLines)
+    const cashAccount = typedAccounts.find((a) => a.name === '현금및현금성자산')
+    const cashLines = cashAccount ? typedLines.filter((l) => l.account_id === cashAccount.id) : []
+    const cashBalance = cashLines.reduce((s, l) => s + (l.debit - l.credit), 0)
+    setF((prev) => ({
+      ...prev,
+      total_assets: String(Math.round(totals.assets)),
+      total_liabilities: String(Math.round(totals.liabilities)),
+      cash_balance: String(Math.round(cashBalance)),
+    }))
+    setCalcNote(
+      typedLines.length === 0
+        ? '이 날짜까지 분개장에 입력된 거래가 없습니다 (0으로 계산됨).'
+        : '분개장 기준으로 계산했습니다. 필요하면 값을 직접 수정할 수 있습니다.',
+    )
   }
 
   async function submit(e: React.FormEvent) {
@@ -209,6 +250,7 @@ function AddSnapshotForm({ onAdded }: { onAdded: () => void }) {
     <div className="card">
       <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>새 결산 스냅샷 추가</h3>
       <p style={{ fontSize: 12, color: 'var(--ink-faint)', margin: '0 0 12px' }}>
+        자산총계·부채총계는 "분개장에서 자동계산"을 누르면 기준일까지의 분개장 데이터로 채워집니다(필요시 직접 수정 가능).
         영업외손익은 이 표에 반영되지 않습니다(단순화) — 정확한 순손익은 결산 확정 후 직접 보정하세요.
       </p>
       <form onSubmit={submit} className="field-row">
@@ -232,6 +274,9 @@ function AddSnapshotForm({ onAdded }: { onAdded: () => void }) {
           <label>부채총계</label>
           <input type="number" value={f.total_liabilities} onChange={(e) => set('total_liabilities', e.target.value)} required />
         </div>
+        <button type="button" className="btn" onClick={calcFromLedger} disabled={calcBusy} style={{ height: 34 }}>
+          {calcBusy ? '계산 중…' : '분개장에서 자동계산'}
+        </button>
         <div className="field">
           <label>현금</label>
           <input type="number" value={f.cash_balance} onChange={(e) => set('cash_balance', e.target.value)} />
@@ -244,6 +289,7 @@ function AddSnapshotForm({ onAdded }: { onAdded: () => void }) {
           {busy ? '저장 중…' : '추가'}
         </button>
       </form>
+      {calcNote && <p style={{ fontSize: 12, color: 'var(--ink-faint)', marginTop: 10 }}>{calcNote}</p>}
     </div>
   )
 }

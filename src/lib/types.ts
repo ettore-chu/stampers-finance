@@ -62,3 +62,42 @@ export interface FinanceNol {
   expiry_year: number
   notes: string | null
 }
+
+export type AccountType = 'asset' | 'liability' | 'equity' | 'revenue' | 'expense'
+export type NormalBalance = 'debit' | 'credit'
+
+export interface FinanceAccount {
+  id: string
+  code: string | null
+  name: string
+  account_type: AccountType
+  normal_balance: NormalBalance
+  is_active: boolean
+}
+
+export interface FinanceJournalEntry {
+  id: string
+  entry_date: string
+  description: string | null
+  created_at: string
+}
+
+export interface FinanceJournalLine {
+  id: string
+  entry_id: string
+  account_id: string
+  debit: number
+  credit: number
+  memo: string | null
+}
+
+export interface FinanceReceipt {
+  id: string
+  journal_entry_id: string | null
+  receipt_date: string
+  vendor: string | null
+  amount: number | null
+  memo: string | null
+  storage_path: string
+  uploaded_at: string
+}

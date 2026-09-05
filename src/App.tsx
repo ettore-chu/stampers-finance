@@ -6,9 +6,13 @@ import LoanLedger from './components/LoanLedger'
 import CapitalDashboard from './components/CapitalDashboard'
 import CostMonitor from './components/CostMonitor'
 import NolTracker from './components/NolTracker'
+import JournalLedger from './components/JournalLedger'
+import ReceiptVault from './components/ReceiptVault'
 
 const TABS = [
   { key: 'capital', label: '자본잠식·런웨이' },
+  { key: 'journal', label: '분개장' },
+  { key: 'receipts', label: '영수증함' },
   { key: 'loans', label: '차입금 원장' },
   { key: 'cost', label: '원가율 모니터' },
   { key: 'nol', label: '결손금·손익분기' },
@@ -58,6 +62,8 @@ export default function App() {
 
       <main>
         {tab === 'capital' && <CapitalDashboard />}
+        {tab === 'journal' && <JournalLedger />}
+        {tab === 'receipts' && <ReceiptVault />}
         {tab === 'loans' && <LoanLedger />}
         {tab === 'cost' && <CostMonitor />}
         {tab === 'nol' && <NolTracker />}
