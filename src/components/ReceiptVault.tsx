@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { won, fmtDate } from '../lib/format'
+import { openReceiptFile, uploadReceiptFile } from '../lib/receipts'
 import type { FinanceJournalEntry, FinanceReceipt } from '../lib/types'
 
 export default function ReceiptVault() {
@@ -31,12 +32,11 @@ export default function ReceiptVault() {
   }, [])
 
   async function openReceipt(path: string) {
-    const { data, error } = await supabase.storage.from('receipts').createSignedUrl(path, 60)
-    if (error || !data) {
-      alert('파일을 열 수 없습니다: ' + (error?.message ?? '알 수 없는 오류'))
-      return
+    try {
+      await openReceiptFile(path)
+    } catch (err) {
+      alert('파일을 열 수 없습니다: ' + (err instanceof Error ? err.message : '알 수 없는 오류'))
     }
-    window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
   }
 
   if (loading) return <p className="empty-note">불러오는 중…</p>
@@ -46,7 +46,8 @@ export default function ReceiptVault() {
     <div>
       <p style={{ fontSize: 12.5, color: 'var(--ink-faint)', lineHeight: 1.7, margin: '0 0 20px' }}>
         영수증·세금계산서·카드전표 원본 파일을 올려두면, 나중에 셀프 신고하거나 세무조사 소명이 필요할 때 여기서 바로 찾을 수 있습니다.
-        비공개 저장소라 대표자 본인만 열람 가능합니다.
+        비공개 저장소라 대표자 본인만 열람 가능합니다. 분개를 저장할 때 바로 첨부하려면 <b>분개장</b> 탭을 이용하세요 — 여기는 전체
+        영수증을 한눈에 보는 용도입니다.
       </p>
 
       <div className="table-wrap" style={{ marginBottom: 20 }}>
@@ -113,26 +114,20 @@ function UploadForm({ entries, onAdded }: { entries: FinanceJournalEntry[]; onAd
       return
     }
     setBusy(true)
-    const path = `${crypto.randomUUID()}-${file.name}`
-    const { error: uploadErr } = await supabase.storage.from('receipts').upload(path, file)
-    if (uploadErr) {
+    try {
+      await uploadReceiptFile(file, {
+        receipt_date: date,
+        vendor: vendor || null,
+        amount: amount ? Number(amount) : null,
+        memo: memo || null,
+        journal_entry_id: entryId || null,
+      })
+    } catch (err) {
       setBusy(false)
-      setError(uploadErr.message)
+      setError(err instanceof Error ? err.message : '업로드 실패')
       return
     }
-    const { error: insertErr } = await supabase.from('finance_receipts').insert({
-      receipt_date: date,
-      vendor: vendor || null,
-      amount: amount ? Number(amount) : null,
-      memo: memo || null,
-      journal_entry_id: entryId || null,
-      storage_path: path,
-    })
     setBusy(false)
-    if (insertErr) {
-      setError(insertErr.message)
-      return
-    }
     setFile(null)
     setDate('')
     setVendor('')

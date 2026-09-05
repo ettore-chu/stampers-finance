@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { won, fmtDate } from '../lib/format'
 import { balancesByAccount, ledgerTotals } from '../lib/ledger'
-import type { AccountType, FinanceAccount, FinanceJournalEntry, FinanceJournalLine, NormalBalance } from '../lib/types'
+import { openReceiptFile, uploadReceiptFile } from '../lib/receipts'
+import type { AccountType, FinanceAccount, FinanceJournalEntry, FinanceJournalLine, FinanceReceipt, NormalBalance } from '../lib/types'
 
 const TYPE_LABEL: Record<AccountType, string> = {
   asset: '자산',
@@ -24,6 +25,7 @@ export default function JournalLedger() {
   const [accounts, setAccounts] = useState<FinanceAccount[]>([])
   const [entries, setEntries] = useState<FinanceJournalEntry[]>([])
   const [lines, setLines] = useState<FinanceJournalLine[]>([])
+  const [receipts, setReceipts] = useState<FinanceReceipt[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showAccounts, setShowAccounts] = useState(false)
@@ -31,19 +33,22 @@ export default function JournalLedger() {
   async function load() {
     setLoading(true)
     setError(null)
-    const [{ data: acc, error: accErr }, { data: ent, error: entErr }, { data: ln, error: lnErr }] = await Promise.all([
-      supabase.from('finance_accounts').select('*').order('code'),
-      supabase.from('finance_journal_entries').select('*').order('entry_date', { ascending: false }),
-      supabase.from('finance_journal_lines').select('*'),
-    ])
-    if (accErr || entErr || lnErr) {
-      setError((accErr ?? entErr ?? lnErr)?.message ?? '알 수 없는 오류')
+    const [{ data: acc, error: accErr }, { data: ent, error: entErr }, { data: ln, error: lnErr }, { data: rec, error: recErr }] =
+      await Promise.all([
+        supabase.from('finance_accounts').select('*').order('code'),
+        supabase.from('finance_journal_entries').select('*').order('entry_date', { ascending: false }),
+        supabase.from('finance_journal_lines').select('*'),
+        supabase.from('finance_receipts').select('*'),
+      ])
+    if (accErr || entErr || lnErr || recErr) {
+      setError((accErr ?? entErr ?? lnErr ?? recErr)?.message ?? '알 수 없는 오류')
       setLoading(false)
       return
     }
     setAccounts(acc ?? [])
     setEntries(ent ?? [])
     setLines(ln ?? [])
+    setReceipts(rec ?? [])
     setLoading(false)
   }
 
@@ -59,6 +64,16 @@ export default function JournalLedger() {
     }
     return m
   }, [lines])
+
+  const receiptsByEntry = useMemo(() => {
+    const m: Record<string, FinanceReceipt[]> = {}
+    for (const r of receipts) {
+      if (!r.journal_entry_id) continue
+      m[r.journal_entry_id] = m[r.journal_entry_id] ?? []
+      m[r.journal_entry_id].push(r)
+    }
+    return m
+  }, [receipts])
 
   const balances = useMemo(() => balancesByAccount(accounts, lines), [accounts, lines])
   const totals = useMemo(() => ledgerTotals(accounts, lines), [accounts, lines])
@@ -168,6 +183,7 @@ export default function JournalLedger() {
         {entries.map((e) => {
           const els = linesByEntry[e.id] ?? []
           const entryDebit = els.reduce((s, l) => s + l.debit, 0)
+          const entryReceipts = receiptsByEntry[e.id] ?? []
           return (
             <div className="card" key={e.id}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -202,6 +218,7 @@ export default function JournalLedger() {
                   </tbody>
                 </table>
               </div>
+              <EntryReceipts entryId={e.id} entryDate={e.entry_date} receipts={entryReceipts} onChanged={load} />
             </div>
           )
         })}
@@ -209,6 +226,64 @@ export default function JournalLedger() {
       </div>
 
       <AddEntryForm accounts={accounts} onAdded={load} />
+    </div>
+  )
+}
+
+function EntryReceipts({
+  entryId,
+  entryDate,
+  receipts,
+  onChanged,
+}: {
+  entryId: string
+  entryDate: string
+  receipts: FinanceReceipt[]
+  onChanged: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleFile(file: File | null) {
+    if (!file) return
+    setBusy(true)
+    setError(null)
+    try {
+      await uploadReceiptFile(file, { receipt_date: entryDate, journal_entry_id: entryId })
+      onChanged()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '업로드 실패')
+    }
+    setBusy(false)
+  }
+
+  async function open(path: string) {
+    try {
+      await openReceiptFile(path)
+    } catch (err) {
+      alert('파일을 열 수 없습니다: ' + (err instanceof Error ? err.message : '알 수 없는 오류'))
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed var(--line-strong)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+      <span style={{ fontSize: 12, color: 'var(--ink-faint)', fontWeight: 600 }}>영수증</span>
+      {receipts.map((r) => (
+        <button key={r.id} type="button" className="btn" style={{ fontSize: 12 }} onClick={() => open(r.storage_path)}>
+          {r.vendor ?? '파일'} 열기
+        </button>
+      ))}
+      <label className="btn" style={{ fontSize: 12, cursor: 'pointer', margin: 0 }}>
+        {busy ? '업로드 중…' : '+ 영수증 첨부'}
+        <input
+          type="file"
+          accept="image/*,application/pdf"
+          style={{ display: 'none' }}
+          disabled={busy}
+          onChange={(e) => handleFile(e.target.files?.[0] ?? null)}
+        />
+      </label>
+      {error && <span style={{ fontSize: 12, color: 'var(--critical)' }}>{error}</span>}
     </div>
   )
 }
@@ -278,6 +353,7 @@ function AddEntryForm({ accounts, onAdded }: { accounts: FinanceAccount[]; onAdd
   ])
   const [busy, setBusy] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  const [receiptFile, setReceiptFile] = useState<File | null>(null)
 
   function updateLine(i: number, patch: Partial<DraftLine>) {
     setDraftLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)))
@@ -328,17 +404,34 @@ function AddEntryForm({ accounts, onAdded }: { accounts: FinanceAccount[]; onAdd
         memo: l.memo || null,
       })),
     )
-    setBusy(false)
     if (lineErr) {
+      setBusy(false)
       setFormError(lineErr.message)
       return
     }
+    if (receiptFile) {
+      try {
+        await uploadReceiptFile(receiptFile, {
+          receipt_date: date,
+          journal_entry_id: entry.id,
+          amount: totalDebit,
+          memo: description || null,
+        })
+      } catch (err) {
+        setBusy(false)
+        setFormError('분개는 저장됐지만 영수증 업로드에 실패했습니다: ' + (err instanceof Error ? err.message : '알 수 없는 오류'))
+        onAdded()
+        return
+      }
+    }
+    setBusy(false)
     setDate('')
     setDescription('')
     setDraftLines([
       { account_id: '', debit: '', credit: '', memo: '' },
       { account_id: '', debit: '', credit: '', memo: '' },
     ])
+    setReceiptFile(null)
     onAdded()
   }
 
@@ -354,6 +447,10 @@ function AddEntryForm({ accounts, onAdded }: { accounts: FinanceAccount[]; onAdd
           <div className="field" style={{ flex: 1, minWidth: 200 }}>
             <label>적요</label>
             <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="예: 9월 임차료 지급" />
+          </div>
+          <div className="field">
+            <label>영수증 첨부(선택)</label>
+            <input type="file" accept="image/*,application/pdf" onChange={(e) => setReceiptFile(e.target.files?.[0] ?? null)} />
           </div>
         </div>
 
