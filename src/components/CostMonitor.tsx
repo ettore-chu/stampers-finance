@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { won, pct } from '../lib/format'
+import { downloadCsv } from '../lib/exportFiles'
 import type { FinanceExpenseCategory, FinancePeriodExpense, FinanceSnapshot } from '../lib/types'
 
 export default function CostMonitor() {
@@ -33,6 +34,22 @@ export default function CostMonitor() {
     load()
   }, [])
 
+  async function deleteExpense(periodEnd: string, categoryId: string) {
+    if (!confirm('이 비용 항목을 삭제할까요?')) return
+    await supabase.from('finance_period_expenses').delete().eq('period_end', periodEnd).eq('category_id', categoryId)
+    load()
+  }
+
+  function exportCsv() {
+    const rows: (string | number)[][] = [['기준일', '항목', '금액', '매출', '매출대비비율']]
+    for (const e of expenses.slice().sort((a, b) => a.period_end.localeCompare(b.period_end))) {
+      const cat = categories.find((c) => c.id === e.category_id)
+      const revenue = snapshots.find((s) => s.period_end === e.period_end)?.revenue ?? null
+      rows.push([e.period_end, cat?.name ?? '', e.amount, revenue ?? '', revenue ? ((e.amount / revenue) * 100).toFixed(1) + '%' : ''])
+    }
+    downloadCsv(`stampers_원가내역_${new Date().toISOString().slice(0, 10)}.csv`, rows)
+  }
+
   if (loading) return <p className="empty-note">불러오는 중…</p>
   if (error) return <p className="empty-note" style={{ color: 'var(--critical)' }}>{error}</p>
 
@@ -41,6 +58,11 @@ export default function CostMonitor() {
 
   return (
     <div>
+      <div style={{ marginBottom: 14 }}>
+        <button className="btn" onClick={exportCsv} disabled={expenses.length === 0}>
+          원가 내역 CSV로 내보내기
+        </button>
+      </div>
       {periods.length === 0 && <p className="empty-note">등록된 비용 내역이 없습니다.</p>}
       {periods.map((period) => {
         const revenue = snapshots.find((s) => s.period_end === period)?.revenue ?? null
@@ -60,6 +82,7 @@ export default function CostMonitor() {
                   <th>금액</th>
                   <th>매출 대비</th>
                   <th>상태</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -79,6 +102,11 @@ export default function CostMonitor() {
                           '—'
                         )}
                       </td>
+                      <td>
+                        <button className="btn" style={{ fontSize: 12 }} onClick={() => deleteExpense(period, r.category_id)}>
+                          삭제
+                        </button>
+                      </td>
                     </tr>
                   )
                 })}
@@ -86,6 +114,7 @@ export default function CostMonitor() {
                   <td style={{ fontWeight: 700, color: 'var(--ink)' }}>합계</td>
                   <td className="mono" style={{ fontWeight: 700 }}>{won(total)}</td>
                   <td className="mono" style={{ fontWeight: 700 }}>{revenue ? pct((total / revenue) * 100) : '—'}</td>
+                  <td></td>
                   <td></td>
                 </tr>
               </tbody>
@@ -96,7 +125,7 @@ export default function CostMonitor() {
 
       <div className="two-col-forms" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
         <AddExpenseForm categories={categories} onAdded={load} />
-        <AddCategoryForm onAdded={load} />
+        <AddCategoryForm categories={categories} onAdded={load} />
       </div>
     </div>
   )
@@ -153,7 +182,7 @@ function AddExpenseForm({ categories, onAdded }: { categories: FinanceExpenseCat
   )
 }
 
-function AddCategoryForm({ onAdded }: { onAdded: () => void }) {
+function AddCategoryForm({ categories, onAdded }: { categories: FinanceExpenseCategory[]; onAdded: () => void }) {
   const [name, setName] = useState('')
   const [threshold, setThreshold] = useState('')
   const [busy, setBusy] = useState(false)
@@ -172,9 +201,29 @@ function AddCategoryForm({ onAdded }: { onAdded: () => void }) {
     onAdded()
   }
 
+  async function remove(id: string) {
+    if (!confirm('이 항목을 삭제할까요? 이 항목으로 등록된 비용 내역도 함께 삭제됩니다.')) return
+    await supabase.from('finance_expense_categories').delete().eq('id', id)
+    onAdded()
+  }
+
   return (
     <div className="card">
-      <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>새 비용 항목 등록</h3>
+      <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>비용 항목 관리</h3>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
+        {categories.map((c) => (
+          <span key={c.id} className="badge ok" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            {c.name}
+            <button
+              type="button"
+              onClick={() => remove(c.id)}
+              style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'inherit', fontWeight: 700, padding: 0 }}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+      </div>
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <div className="field">
           <label>항목명</label>

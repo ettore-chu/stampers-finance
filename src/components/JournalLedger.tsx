@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabaseClient'
 import { won, fmtDate } from '../lib/format'
 import { balancesByAccount, ledgerTotals } from '../lib/ledger'
 import { openReceiptFile, uploadReceiptFile } from '../lib/receipts'
+import { downloadCsv } from '../lib/exportFiles'
 import type { AccountType, FinanceAccount, FinanceJournalEntry, FinanceJournalLine, FinanceReceipt, NormalBalance } from '../lib/types'
 
 const TYPE_LABEL: Record<AccountType, string> = {
@@ -83,6 +84,24 @@ export default function JournalLedger() {
     return { debit, credit, balanced: Math.abs(debit - credit) < 0.5 }
   }, [lines])
 
+  async function deleteEntry(id: string) {
+    if (!confirm('이 분개를 삭제할까요? 연결된 영수증은 삭제되지 않고 연결만 해제됩니다.')) return
+    await supabase.from('finance_journal_entries').delete().eq('id', id)
+    load()
+  }
+
+  function exportCsv() {
+    const rows: (string | number)[][] = [['일자', '적요', '계정과목', '차변', '대변', '메모']]
+    const sorted = entries.slice().sort((a, b) => a.entry_date.localeCompare(b.entry_date))
+    for (const e of sorted) {
+      for (const l of linesByEntry[e.id] ?? []) {
+        const account = accounts.find((a) => a.id === l.account_id)
+        rows.push([e.entry_date, e.description ?? '', account?.name ?? '', l.debit || '', l.credit || '', l.memo ?? ''])
+      }
+    }
+    downloadCsv(`stampers_분개장_${new Date().toISOString().slice(0, 10)}.csv`, rows)
+  }
+
   if (loading) return <p className="empty-note">불러오는 중…</p>
   if (error) return <p className="empty-note" style={{ color: 'var(--critical)' }}>{error}</p>
 
@@ -149,9 +168,14 @@ export default function JournalLedger() {
       </div>
 
       <div style={{ marginBottom: 20 }}>
-        <button className="btn" onClick={() => setShowAccounts((v) => !v)}>
-          {showAccounts ? '계정과목 관리 닫기' : '계정과목 관리'}
-        </button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button className="btn" onClick={() => setShowAccounts((v) => !v)}>
+            {showAccounts ? '계정과목 관리 닫기' : '계정과목 관리'}
+          </button>
+          <button className="btn" onClick={exportCsv} disabled={entries.length === 0}>
+            분개장 CSV로 내보내기
+          </button>
+        </div>
         {showAccounts && (
           <div className="card" style={{ marginTop: 12 }}>
             <div className="table-wrap" style={{ marginBottom: 14 }}>
@@ -191,7 +215,12 @@ export default function JournalLedger() {
                   <strong style={{ fontSize: 14 }}>{fmtDate(e.entry_date)}</strong>
                   {e.description && <span style={{ marginLeft: 8, fontSize: 13, color: 'var(--ink-soft)' }}>{e.description}</span>}
                 </div>
-                <span className="mono" style={{ fontWeight: 700 }}>{won(entryDebit)}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span className="mono" style={{ fontWeight: 700 }}>{won(entryDebit)}</span>
+                  <button className="btn" style={{ fontSize: 12 }} onClick={() => deleteEntry(e.id)}>
+                    삭제
+                  </button>
+                </div>
               </div>
               <div className="table-wrap">
                 <table>
@@ -265,13 +294,25 @@ function EntryReceipts({
     }
   }
 
+  async function remove(r: FinanceReceipt) {
+    if (!confirm('이 영수증을 삭제할까요?')) return
+    await supabase.storage.from('receipts').remove([r.storage_path])
+    await supabase.from('finance_receipts').delete().eq('id', r.id)
+    onChanged()
+  }
+
   return (
     <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed var(--line-strong)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
       <span style={{ fontSize: 12, color: 'var(--ink-faint)', fontWeight: 600 }}>영수증</span>
       {receipts.map((r) => (
-        <button key={r.id} type="button" className="btn" style={{ fontSize: 12 }} onClick={() => open(r.storage_path)}>
-          {r.vendor ?? '파일'} 열기
-        </button>
+        <span key={r.id} style={{ display: 'inline-flex', gap: 4 }}>
+          <button type="button" className="btn" style={{ fontSize: 12 }} onClick={() => open(r.storage_path)}>
+            {r.vendor ?? '파일'} 열기
+          </button>
+          <button type="button" className="btn" style={{ fontSize: 12 }} onClick={() => remove(r)}>
+            삭제
+          </button>
+        </span>
       ))}
       <label className="btn" style={{ fontSize: 12, cursor: 'pointer', margin: 0 }}>
         {busy ? '업로드 중…' : '+ 영수증 첨부'}

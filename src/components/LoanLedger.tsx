@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { won, pct, fmtDate } from '../lib/format'
+import { downloadCsv } from '../lib/exportFiles'
 import type { FinanceLoan, FinanceLoanTransaction, LenderType, TxType } from '../lib/types'
 
 function balanceOf(txs: FinanceLoanTransaction[]): number {
@@ -48,6 +49,35 @@ export default function LoanLedger() {
     .filter((l) => l.lender_type === 'officer')
     .reduce((sum, l) => sum + balanceOf(txByLoan[l.id] ?? []), 0)
 
+  async function deleteLoan(id: string) {
+    if (!confirm('이 차입과 관련 거래내역을 모두 삭제할까요?')) return
+    await supabase.from('finance_loans').delete().eq('id', id)
+    load()
+  }
+
+  async function deleteTx(id: string) {
+    if (!confirm('이 거래를 삭제할까요?')) return
+    await supabase.from('finance_loan_transactions').delete().eq('id', id)
+    load()
+  }
+
+  function exportCsv() {
+    const rows: (string | number)[][] = [['대주', '구분', '일자', '거래구분', '금액', '메모']]
+    for (const loan of loans) {
+      for (const t of txByLoan[loan.id] ?? []) {
+        rows.push([
+          loan.lender_name,
+          loan.lender_type === 'officer' ? '특수관계자' : '외부',
+          t.tx_date,
+          t.tx_type === 'draw' ? '차입' : t.tx_type === 'repayment' ? '상환' : '이자발생',
+          t.amount,
+          t.note ?? '',
+        ])
+      }
+    }
+    downloadCsv(`stampers_차입금원장_${new Date().toISOString().slice(0, 10)}.csv`, rows)
+  }
+
   if (loading) return <p className="empty-note">불러오는 중…</p>
   if (error) return <p className="empty-note" style={{ color: 'var(--critical)' }}>{error}</p>
 
@@ -68,6 +98,12 @@ export default function LoanLedger() {
             {totalOutstanding ? pct((officerOutstanding / totalOutstanding) * 100) : '—'}
           </div>
         </div>
+      </div>
+
+      <div style={{ marginBottom: 14 }}>
+        <button className="btn" onClick={exportCsv} disabled={loans.length === 0}>
+          차입금 원장 CSV로 내보내기
+        </button>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 24 }}>
@@ -94,9 +130,14 @@ export default function LoanLedger() {
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <div className="mono" style={{ fontSize: 19, fontWeight: 700 }}>{won(balance)}</div>
-                  <button className="btn" style={{ marginTop: 6, fontSize: 12 }} onClick={() => setOpenLoan(isOpen ? null : loan.id)}>
-                    {isOpen ? '거래내역 닫기' : '거래내역 보기'}
-                  </button>
+                  <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                    <button className="btn" style={{ fontSize: 12 }} onClick={() => setOpenLoan(isOpen ? null : loan.id)}>
+                      {isOpen ? '거래내역 닫기' : '거래내역 보기'}
+                    </button>
+                    <button className="btn" style={{ fontSize: 12 }} onClick={() => deleteLoan(loan.id)}>
+                      삭제
+                    </button>
+                  </div>
                 </div>
               </div>
               {isOpen && (
@@ -109,6 +150,7 @@ export default function LoanLedger() {
                           <th>구분</th>
                           <th>금액</th>
                           <th>메모</th>
+                          <th></th>
                         </tr>
                       </thead>
                       <tbody>
@@ -121,6 +163,11 @@ export default function LoanLedger() {
                               {won(t.amount)}
                             </td>
                             <td style={{ textAlign: 'left' }}>{t.note}</td>
+                            <td>
+                              <button className="btn" style={{ fontSize: 12 }} onClick={() => deleteTx(t.id)}>
+                                삭제
+                              </button>
+                            </td>
                           </tr>
                         ))}
                       </tbody>

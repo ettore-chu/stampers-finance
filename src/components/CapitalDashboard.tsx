@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { won, pct, fmtDate } from '../lib/format'
 import { ledgerTotals } from '../lib/ledger'
+import { downloadCsv } from '../lib/exportFiles'
 import type { FinanceAccount, FinanceCompany, FinanceJournalLine, FinanceSnapshot } from '../lib/types'
 
 const VB_W = 640
@@ -49,6 +50,33 @@ export default function CapitalDashboard() {
   useEffect(() => {
     load()
   }, [])
+
+  async function deleteSnapshot(periodEnd: string) {
+    if (!confirm('이 결산 스냅샷을 삭제할까요?')) return
+    await supabase.from('finance_snapshots').delete().eq('period_end', periodEnd)
+    load()
+  }
+
+  function exportCsv() {
+    const rows: (string | number)[][] = [
+      ['기준일', '매출액', '판관비', '영업손익', '순손익', '자산총계', '부채총계', '자본총계', '현금', '메모'],
+    ]
+    for (const s of snapshots) {
+      rows.push([
+        s.period_end,
+        s.revenue,
+        s.opex,
+        s.operating_income,
+        s.net_income,
+        s.total_assets,
+        s.total_liabilities,
+        s.total_equity,
+        s.cash_balance,
+        s.notes ?? '',
+      ])
+    }
+    downloadCsv(`stampers_결산스냅샷_${new Date().toISOString().slice(0, 10)}.csv`, rows)
+  }
 
   if (loading) return <p className="empty-note">불러오는 중…</p>
   if (error) return <p className="empty-note" style={{ color: 'var(--critical)' }}>{error}</p>
@@ -130,6 +158,12 @@ export default function CapitalDashboard() {
         </div>
       )}
 
+      <div style={{ marginBottom: 14 }}>
+        <button className="btn" onClick={exportCsv} disabled={snapshots.length === 0}>
+          결산 스냅샷 CSV로 내보내기
+        </button>
+      </div>
+
       <div className="table-wrap" style={{ marginBottom: 24 }}>
         <table>
           <thead>
@@ -141,6 +175,7 @@ export default function CapitalDashboard() {
               <th>부채총계</th>
               <th>자본총계</th>
               <th>현금</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -153,6 +188,11 @@ export default function CapitalDashboard() {
                 <td className="mono">{won(s.total_liabilities)}</td>
                 <td className={`mono ${s.total_equity < 0 ? 'neg' : 'pos'}`}>{won(s.total_equity)}</td>
                 <td className="mono">{won(s.cash_balance)}</td>
+                <td>
+                  <button className="btn" style={{ fontSize: 12 }} onClick={() => deleteSnapshot(s.period_end)}>
+                    삭제
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>

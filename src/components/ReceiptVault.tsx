@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
+import JSZip from 'jszip'
 import { supabase } from '../lib/supabaseClient'
 import { won, fmtDate } from '../lib/format'
 import { openReceiptFile, uploadReceiptFile } from '../lib/receipts'
+import { downloadBlob, toCsvString } from '../lib/exportFiles'
 import type { FinanceJournalEntry, FinanceReceipt } from '../lib/types'
 
 export default function ReceiptVault() {
@@ -9,6 +11,7 @@ export default function ReceiptVault() {
   const [entries, setEntries] = useState<FinanceJournalEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [zipping, setZipping] = useState(false)
 
   async function load() {
     setLoading(true)
@@ -39,6 +42,39 @@ export default function ReceiptVault() {
     }
   }
 
+  async function deleteReceipt(r: FinanceReceipt) {
+    if (!confirm('이 영수증을 삭제할까요?')) return
+    await supabase.storage.from('receipts').remove([r.storage_path])
+    await supabase.from('finance_receipts').delete().eq('id', r.id)
+    load()
+  }
+
+  async function exportZip() {
+    setZipping(true)
+    const zip = new JSZip()
+    const manifest: (string | number)[][] = [['파일명', '일자', '거래처', '금액', '연결된 분개', '메모']]
+    for (const r of receipts) {
+      const { data, error } = await supabase.storage.from('receipts').download(r.storage_path)
+      if (error || !data) continue
+      const originalName = r.storage_path.split('-').slice(1).join('-') || r.storage_path
+      const filename = `${r.receipt_date}_${originalName}`
+      zip.file(filename, data)
+      const linked = entries.find((e) => e.id === r.journal_entry_id)
+      manifest.push([
+        filename,
+        r.receipt_date,
+        r.vendor ?? '',
+        r.amount ?? '',
+        linked ? `${linked.entry_date} ${linked.description ?? ''}` : '',
+        r.memo ?? '',
+      ])
+    }
+    zip.file('manifest.csv', '﻿' + toCsvString(manifest))
+    const blob = await zip.generateAsync({ type: 'blob' })
+    downloadBlob(blob, `stampers_영수증_${new Date().toISOString().slice(0, 10)}.zip`)
+    setZipping(false)
+  }
+
   if (loading) return <p className="empty-note">불러오는 중…</p>
   if (error) return <p className="empty-note" style={{ color: 'var(--critical)' }}>{error}</p>
 
@@ -49,6 +85,12 @@ export default function ReceiptVault() {
         비공개 저장소라 대표자 본인만 열람 가능합니다. 분개를 저장할 때 바로 첨부하려면 <b>분개장</b> 탭을 이용하세요 — 여기는 전체
         영수증을 한눈에 보는 용도입니다.
       </p>
+
+      <div style={{ marginBottom: 14 }}>
+        <button className="btn" onClick={exportZip} disabled={zipping || receipts.length === 0}>
+          {zipping ? '압축 중…' : '전체 다운로드 (ZIP + 명세서 CSV) — 세무사 전달용'}
+        </button>
+      </div>
 
       <div className="table-wrap" style={{ marginBottom: 20 }}>
         <table>
@@ -72,9 +114,12 @@ export default function ReceiptVault() {
                   <td className="mono">{r.amount !== null ? won(r.amount) : '—'}</td>
                   <td style={{ textAlign: 'left' }}>{linked ? `${linked.entry_date} · ${linked.description ?? ''}` : '—'}</td>
                   <td style={{ textAlign: 'left' }}>{r.memo}</td>
-                  <td>
+                  <td style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                     <button className="btn" onClick={() => openReceipt(r.storage_path)}>
                       열기
+                    </button>
+                    <button className="btn" onClick={() => deleteReceipt(r)}>
+                      삭제
                     </button>
                   </td>
                 </tr>

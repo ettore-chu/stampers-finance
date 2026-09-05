@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { won } from '../lib/format'
+import { downloadCsv } from '../lib/exportFiles'
 import type { FinanceNol, FinanceSnapshot } from '../lib/types'
 
 const CURRENT_YEAR = new Date().getFullYear()
@@ -32,6 +33,20 @@ export default function NolTracker() {
     load()
   }, [])
 
+  async function deleteRow(fiscalYear: number) {
+    if (!confirm('이 연도의 결손금 기록을 삭제할까요?')) return
+    await supabase.from('finance_nol_carryforwards').delete().eq('fiscal_year', fiscalYear)
+    load()
+  }
+
+  function exportCsv() {
+    const rows_: (string | number)[][] = [['발생연도', '발생액', '사용액', '잔액', '소멸시한', '메모']]
+    for (const r of rows) {
+      rows_.push([r.fiscal_year, r.amount_incurred, r.amount_used, r.amount_incurred - r.amount_used, r.expiry_year, r.notes ?? ''])
+    }
+    downloadCsv(`stampers_이월결손금_${new Date().toISOString().slice(0, 10)}.csv`, rows_)
+  }
+
   if (loading) return <p className="empty-note">불러오는 중…</p>
   if (error) return <p className="empty-note" style={{ color: 'var(--critical)' }}>{error}</p>
 
@@ -40,6 +55,11 @@ export default function NolTracker() {
 
   return (
     <div>
+      <div style={{ marginBottom: 14 }}>
+        <button className="btn" onClick={exportCsv} disabled={rows.length === 0}>
+          결손금 내역 CSV로 내보내기
+        </button>
+      </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 22 }}>
         <div className="card">
           <div style={{ fontSize: 11.5, color: 'var(--ink-faint)', fontWeight: 600 }}>이월결손금 잔액 합계</div>
@@ -87,7 +107,12 @@ export default function NolTracker() {
                     {yearsLeft <= 2 && <span className="badge warn" style={{ marginLeft: 6 }}>소멸 임박</span>}
                   </td>
                   <td>
-                    <UseNolInline row={r} onDone={load} />
+                    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
+                      <UseNolInline row={r} onDone={load} />
+                      <button className="btn" style={{ fontSize: 12 }} onClick={() => deleteRow(r.fiscal_year)}>
+                        삭제
+                      </button>
+                    </div>
                   </td>
                 </tr>
               )
